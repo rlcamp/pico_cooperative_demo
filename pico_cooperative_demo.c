@@ -59,6 +59,18 @@ void uart_tx_wait_blocking_with_yield(uart_inst_t * uart) {
     }
 }
 
+static volatile unsigned char uart_tx_locked = 0;
+
+static void uart_tx_lock(void) {
+    while (uart_tx_locked) yield();
+    uart_tx_locked = 1;
+}
+
+static void uart_tx_unlock(void) {
+    uart_tx_locked = 0;
+    __sev();
+}
+
 /* end cooperative multitasking + low power sleep friendly versions of sdk funcs */
 
 static void pwm_task(void) {
@@ -162,11 +174,14 @@ int main(void) {
         static char buf[128];
         snprintf(buf, sizeof(buf),
                  "this is how many wakes there have been since last alarm: %u\r\n", wakes_elapsed);
+
+        uart_tx_lock();
         uart_puts_with_yield(uart0, buf);
 
         /* this will busy loop (yield, with wfe inhibited) while the last up to 32 bytes of
          the above are transmitted. you may or may not actually need this, it is safe to
          modify buf without doing so */
 //        uart_tx_wait_blocking_with_yield(uart0);
+        uart_tx_unlock();
     }
 }
