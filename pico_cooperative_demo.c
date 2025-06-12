@@ -112,6 +112,61 @@ static void pwm_task(void) {
     }
 }
 
+static void uart_rx_task(void) {
+    /* wake up when either fifo reaches 1/8 full, or when fifo is nonempty and a timeout elapses */
+    hw_set_bits(&uart_get_hw(uart0)->imsc, 1U << UART_UARTIMSC_RXIM_LSB | 1U << UART_UARTIMSC_RTIM_LSB);
+    irq_set_enabled(UART_IRQ_NUM(uart0), false);
+    hw_write_masked(&uart_get_hw(uart0)->ifls, 0 << UART_UARTIFLS_RXIFLSEL_LSB, 0);
+
+    size_t icur = 0;
+    char linebuf[82];
+
+    /* loop on characters from uart */
+    while (1) {
+        /* sleep until either fifo is 1/8 full, or fifo is nonempty and times out */
+        while (uart_get_hw(uart0)->fr & UART_UARTFR_RXFE_BITS)
+            yield();
+
+        /* clear both of the above possible reasons for having awoke */
+        uart_get_hw(uart0)->icr = UART_UARTICR_RXIC_BITS | UART_UARTICR_RTIC_BITS;
+        irq_clear(UART_IRQ_NUM(uart0));
+
+        /* either of the two reasons mean we can can read at least one byte */
+        const unsigned char byte = uart_get_hw(uart0)->dr;
+
+        /* only advance the cursor if not already full */
+        if (icur < sizeof(linebuf)) linebuf[icur++] = byte;
+
+        /* this will only be non-NULL when it points to a complete, properly terminated line */
+        const char * line = NULL;
+
+        /* we treat either line ending identically, and ignore duplicates/empty lines */
+        if ('\r' == byte || '\n' == byte) {
+            /* if overflow occurred, discard the partial line */
+            if (byte != linebuf[icur - 1]) icur = 1;
+
+            /* overwrite whichever line ending we got with a zero termination */
+            linebuf[icur - 1] = '\0';
+
+            /* reset cursor */
+            icur = 0;
+
+            /* if the line ending in this newline was nonempty, return it */
+            if (linebuf[0] != '\0') line = linebuf;
+        }
+
+        /* if we got a complete line... */
+        if (line) {
+            static char buf[128];
+            snprintf(buf, sizeof(buf), "%% %s\r\n", line);
+
+            uart_tx_lock();
+            uart_puts_with_yield(uart0, buf);
+            uart_tx_unlock();
+        }
+    }
+}
+
 int main(void) {
     /* this is not a computationally heavy demo - we could run at 12 MHz but it
      requires more code and for this demo we just want to run at a defined rate */
@@ -138,9 +193,10 @@ int main(void) {
         unsigned char stack[2048 - 16];
 
         struct child_context child;
-    } child_pwm;
+    } child_pwm, child_uart_rx;
 
     child_start(&child_pwm.child, pwm_task);
+    child_start(&child_uart_rx.child, uart_rx_task);
 
     const unsigned alarm_num = timer_hardware_alarm_claim_unused(timer_hw, true);
 
