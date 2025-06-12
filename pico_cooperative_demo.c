@@ -38,8 +38,7 @@ void uart_puts_with_yield(uart_inst_t * uart, const char * buf) {
         while (uart_get_hw(uart)->fr & UART_UARTFR_TXFF_BITS)
             yield();
 
-        /* acknowledge and clear the interrupt that woke us up */
-        uart_get_hw(uart)->icr = UART_UARTICR_TXIC_BITS;
+        /* clear the interrupt that woke us up */
         irq_clear(UART_IRQ_NUM(uart));
 
         /* write the byte to the fifo */
