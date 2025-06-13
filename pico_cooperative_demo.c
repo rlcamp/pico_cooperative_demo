@@ -1,4 +1,5 @@
-/* simple demo which uses sevonpend and runs two cooperative tasks to do two things */
+/* simple demo which uses sevonpend and runs a few cooperative tasks that can each behave
+ as if they were the only thing running, simply by replacing __wfe() with yield() */
 #include "hardware/sync.h"
 #include "hardware/gpio.h"
 #include "hardware/clocks.h"
