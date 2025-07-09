@@ -22,6 +22,8 @@ project(my_project)
 # initialize the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+add_compile_definitions(PICO_PANIC_FUNCTION=)
+
 # add some warning flags TODO: make these only affect project code and not sdk code
 set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS}  -Wall -Wextra -Wshadow")
 
