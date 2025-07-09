@@ -60,6 +60,11 @@ void uart_tx_wait_blocking_with_yield(uart_inst_t * uart) {
     }
 }
 
+/* end cooperative multitasking + low power sleep friendly versions of sdk funcs */
+
+/* this sort of lock is only needed if multiple tasks want to interact with a shared
+ resource (such as a uart) using functions that themselves internally call yield() */
+
 static volatile unsigned char uart_tx_locked = 0;
 
 static void uart_tx_lock(void) {
@@ -71,8 +76,6 @@ static void uart_tx_unlock(void) {
     uart_tx_locked = 0;
     __sev();
 }
-
-/* end cooperative multitasking + low power sleep friendly versions of sdk funcs */
 
 static void pwm_task(void) {
     const unsigned period_in_12MHz_ticks = 30000;
