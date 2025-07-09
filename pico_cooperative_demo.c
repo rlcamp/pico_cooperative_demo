@@ -12,6 +12,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 
 static unsigned wakes = 0;
 
@@ -113,6 +114,108 @@ static void pwm_led_task(void) {
 
         /* square the triangle wave to generate values between 0 and 30000 */
         pwm_set_gpio_level(PICO_DEFAULT_LED_PIN, linear * linear);
+    }
+}
+
+static const uint32_t table[] = {
+    ['A'] = 0b10111000,
+    ['B'] = 0b111010101000,
+    ['C'] = 0b11101011101000,
+    ['D'] = 0b1110101000,
+    ['E'] = 0b1000,
+    ['F'] = 0b101011101000,
+    ['G'] = 0b111011101000,
+    ['H'] = 0b1010101000,
+    ['I'] = 0b101000,
+    ['J'] = 0b1110111011101000,
+    ['K'] = 0b111010111000,
+    ['L'] = 0b101110101000,
+    ['M'] = 0b1110111000,
+    ['N'] = 0b11101000,
+    ['O'] = 0b11101110111000,
+    ['P'] = 0b10111011101000,
+    ['Q'] = 0b1110111010111000,
+    ['R'] = 0b1011101000,
+    ['S'] = 0b10101000,
+    ['T'] = 0b111000,
+    ['U'] = 0b1010111000,
+    ['V'] = 0b101010111000,
+    ['W'] = 0b101110111000,
+    ['X'] = 0b11101010111000,
+    ['Y'] = 0b1110101110111000,
+    ['Z'] = 0b11101110101000,
+    ['1'] = 0b10111011101110111000,
+    ['2'] = 0b101011101110111000,
+    ['3'] = 0b1010101110111000,
+    ['4'] = 0b10101010111000,
+    ['5'] = 0b101010101000,
+    ['6'] = 0b11101010101000,
+    ['7'] = 0b1110111010101000,
+    ['8'] = 0b111011101110101000,
+    ['9'] = 0b11101110111011101000,
+    ['0'] = 0b1110111011101110111000,
+    ['+'] = 0b1011101011101000,
+    ['-'] = 0b111010101010111000,
+    ['?'] = 0b101011101110101000,
+    ['/'] = 0b1110101011101000,
+    ['.'] = 0b10111010111010111000,
+    [','] = 0b1110111010101110111000,
+    ['\''] = 0b1110101011101000,
+    [')'] = 0b1110101110111010111000,
+    ['('] = 0b111010111011101000,
+    [':'] = 0b11101110111010101000,
+};
+
+static void pwm_piezo_morse_task(void) {
+    /* generate quiet linear-period-modulated chirps from 2818 to 3548 Hz with piezo */
+    gpio_set_function(28, GPIO_FUNC_PWM);
+    const unsigned slice_num = pwm_gpio_to_slice_num(28);
+
+    /* tone period in 12 MHz ticks */
+    const unsigned waveform_period = 4258;
+
+    /* get another timer, enable interrupt for alarm, but leave it disabled in nvic */
+    const unsigned alarm_num = timer_hardware_alarm_claim_unused(timer_hw, true);
+    hw_set_bits(&timer_hw->inte, 1U << alarm_num);
+    irq_set_enabled(hardware_alarm_get_irq_num(alarm_num), false);
+
+    const unsigned dot_length_microseconds = 80000;
+
+    /* first tick will be one interval from now */
+    timer_hw->alarm[alarm_num] = timer_hw->timerawl + dot_length_microseconds;
+
+    /* set up the pwm to tick at 12 MHz (assuming sys is 48 MHz) */
+    pwm_config config = pwm_get_default_config();
+    pwm_config_set_clkdiv_int(&config, 4);
+    pwm_config_set_wrap(&config, waveform_period - 1);
+    pwm_init(slice_num, &config, true);
+
+    static const char * sentence = "everything is fine. nothing is ruined. ";
+
+    while (1) {
+        /* loop over letters within the sentence */
+        for (const char * letter = sentence; *letter != '\0'; letter++) {
+            const unsigned index = toupper(*letter);
+            const unsigned bits = index < sizeof(table) / sizeof(table[0]) ? table[index] : 0;
+            unsigned ibit = bits ? 32 - __builtin_clz(bits) : 6;
+
+            /* loop over pixels within the letter */
+            for (; ibit; ibit--) {
+                /* change duty cycle to either quiet-ish or off */
+                pwm_set_gpio_level(28, (bits >> ibit) & 1 ? 30 : 0);
+
+                /* run other tasks or low power sleep until next alarm interrupt */
+                while (!(timer_hw->intr & (1U << alarm_num)))
+                    yield();
+
+                /* acknowledge and clear the interrupt in both timer and nvic */
+                hw_clear_bits(&timer_hw->intr, 1U << alarm_num);
+                irq_clear(hardware_alarm_get_irq_num(alarm_num));
+
+                /* increment and rearm the alarm */
+                timer_hw->alarm[alarm_num] += dot_length_microseconds;
+            }
+        }
     }
 }
 
@@ -240,7 +343,7 @@ int main(void) {
     } child_pwm_led, child_uart_rx, child_pwm_chirp;
 
     child_start(&child_pwm_led.child, pwm_led_task);
-    child_start(&child_pwm_chirp.child, pwm_chirp_task);
+    child_start(&child_pwm_chirp.child, pwm_piezo_morse_task);
     child_start(&child_uart_rx.child, uart_rx_task);
 
     const unsigned alarm_num = timer_hardware_alarm_claim_unused(timer_hw, true);
