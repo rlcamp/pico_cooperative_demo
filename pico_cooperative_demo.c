@@ -77,7 +77,7 @@ static void uart_tx_unlock(void) {
     __sev();
 }
 
-static void pwm_task(void) {
+static void pwm_led_task(void) {
     const unsigned period_in_12MHz_ticks = 30000;
 
     gpio_set_function(PICO_DEFAULT_LED_PIN, GPIO_FUNC_PWM);
@@ -114,6 +114,46 @@ static void pwm_task(void) {
         /* square the triangle wave to generate values between 0 and 30000 */
         pwm_set_gpio_level(PICO_DEFAULT_LED_PIN, linear * linear);
     }
+}
+
+static void pwm_chirp_task(void) {
+    /* generate quiet linear-period-modulated chirps from 2818 to 3548 Hz with piezo */
+    gpio_set_function(28, GPIO_FUNC_PWM);
+    const unsigned slice_num = pwm_gpio_to_slice_num(28);
+
+    /* these are all in 12 MHz ticks */
+    const unsigned period_initial = 4258;
+    const unsigned period_final = 3382;
+    const unsigned decrement = 1;
+
+    pwm_clear_irq(slice_num);
+
+    /* enable interrupt for pwm wrap, but leave it disabled in nvic */
+    pwm_set_irq_enabled(slice_num, true);
+    irq_set_enabled(PWM_DEFAULT_IRQ_NUM(), false);
+
+    /* set up the pwm to tick at 12 MHz (assuming sys is 48 MHz) */
+    pwm_config config = pwm_get_default_config();
+    pwm_config_set_clkdiv_int(&config, 4);
+    pwm_config_set_wrap(&config, period_initial - 1);
+    pwm_init(slice_num, &config, true);
+
+    /* the piezo is very loud if we set this to period/2 */
+    pwm_set_gpio_level(28, 5);
+
+    while (1)
+        for (unsigned period = period_initial; period > period_final; period -= decrement) {
+            /* change the pwm period for the next cycle on every cycle */
+            pwm_hw->slice[slice_num].top = period - decrement - 1;
+
+            /* run other tasks or low power sleep until next pwm overflow interrupt */
+            while (!(pwm_hw->intr & 1U << slice_num))
+                yield();
+
+            /* acknowledge and clear the interrupt in both pwm and nvic */
+            pwm_clear_irq(slice_num);
+            irq_clear(PWM_DEFAULT_IRQ_NUM());
+        }
 }
 
 static void uart_rx_task(void) {
@@ -197,9 +237,10 @@ int main(void) {
         unsigned char stack[2048 - 16];
 
         struct child_context child;
-    } child_pwm, child_uart_rx;
+    } child_pwm_led, child_uart_rx, child_pwm_chirp;
 
-    child_start(&child_pwm.child, pwm_task);
+    child_start(&child_pwm_led.child, pwm_led_task);
+    child_start(&child_pwm_chirp.child, pwm_chirp_task);
     child_start(&child_uart_rx.child, uart_rx_task);
 
     const unsigned alarm_num = timer_hardware_alarm_claim_unused(timer_hw, true);
