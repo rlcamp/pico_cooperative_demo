@@ -314,6 +314,35 @@ static void uart_rx_task(void) {
     }
 }
 
+static void button_task(void) {
+    unsigned gpio = 2;
+
+    gpio_init(gpio);
+    gpio_pull_up(gpio);
+    gpio_set_input_hysteresis_enabled(gpio, true);
+
+    gpio_set_irq_enabled(gpio, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
+    irq_set_enabled(IO_IRQ_BANK0, false);
+    gpio_acknowledge_irq(gpio, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE);
+    while (1) {
+        unsigned events;
+        while (1) {
+            events = ((io_bank0_hw->intr[gpio >> 3U]) >> (4U * gpio)) & 0xF;
+            if (events & (GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE)) {
+                gpio_acknowledge_irq(gpio, events);
+                irq_clear(IO_IRQ_BANK0);
+                break;
+            }
+
+            yield();
+        }
+
+        uart_tx_lock();
+        uart_puts_with_yield(uart0, events & GPIO_IRQ_EDGE_FALL ? "falling edge\r\n" : "rising edge\r\n");
+        uart_tx_unlock();
+    }
+}
+
 int main(void) {
     /* this is not a computationally heavy demo - we could run at 12 MHz but it
      requires more code and for this demo we just want to run at a defined rate */
@@ -340,11 +369,12 @@ int main(void) {
         unsigned char stack[2048 - 16];
 
         struct child_context child;
-    } child_pwm_led, child_uart_rx, child_pwm_chirp;
+    } child_pwm_led, child_uart_rx, child_pwm_chirp, child_button;
 
     child_start(&child_pwm_led.child, pwm_led_task);
     child_start(&child_pwm_chirp.child, pwm_piezo_morse_task);
     child_start(&child_uart_rx.child, uart_rx_task);
+    child_start(&child_button.child, button_task);
 
     const unsigned alarm_num = timer_hardware_alarm_claim_unused(timer_hw, true);
 
