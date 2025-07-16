@@ -167,7 +167,7 @@ static const uint32_t table[] = {
 };
 
 static void pwm_piezo_morse_task(void) {
-    /* generate quiet linear-period-modulated chirps from 2818 to 3548 Hz with piezo */
+    /* generate morse code */
     gpio_set_function(28, GPIO_FUNC_PWM);
     const unsigned slice_num = pwm_gpio_to_slice_num(28);
 
