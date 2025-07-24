@@ -247,10 +247,9 @@ static void pwm_chirp_task(void) {
         gpio_set_function(28, GPIO_FUNC_PWM);
         const unsigned slice_num = pwm_gpio_to_slice_num(28);
 
-        /* these are all in 12 MHz ticks */
-        const unsigned period_initial = 4258;
-        const unsigned period_final = 3382;
+        const unsigned period_initial = 4258; /* 2818 Hz, in 12 MHz ticks */
         const unsigned decrement = 1;
+        const unsigned cycles = 876;
 
         pwm_clear_irq(slice_num);
 
@@ -272,9 +271,14 @@ static void pwm_chirp_task(void) {
         /* now we can start the first period */
         pwm_set_enabled(slice_num, true);
 
-        for (unsigned period = period_initial; period > period_final; period -= decrement) {
-            /* change the pwm period for the next cycle on every cycle */
-            pwm_hw->slice[slice_num].top = period - decrement - 1;
+        /* counter is now counting within the initial period */
+        for (size_t icycle = 0; icycle < cycles; icycle++) {
+            /* change the pwm period for the NEXT cycle on every cycle */
+            pwm_hw->slice[slice_num].top = period_initial - (icycle + 1) * decrement - 1;
+
+            /* at beginning of last desired cycle, set level for the next cycle to zero */
+            if (icycle + 1 == cycles)
+                pwm_set_gpio_level(28, 0);
 
             /* run other tasks or low power sleep until next pwm overflow interrupt */
             while (!(pwm_hw->intr & 1U << slice_num))
@@ -285,8 +289,8 @@ static void pwm_chirp_task(void) {
             irq_clear(PWM_DEFAULT_IRQ_NUM());
         }
 
-        pwm_set_gpio_level(28, 0);
-
+        /* when we get here, we have started the first cycle past the last desired cycle,
+         and the level is zero. we can now just shut off the pwm */
         pwm_set_enabled(slice_num, false);
     }
 }
