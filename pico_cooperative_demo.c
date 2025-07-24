@@ -239,10 +239,15 @@ static void pwm_chirp_task(void) {
     pwm_config config = pwm_get_default_config();
     pwm_config_set_clkdiv_int(&config, 4);
     pwm_config_set_wrap(&config, period_initial - 1);
-    pwm_init(slice_num, &config, true);
+
+    /* need to do this before we can set gpio level */
+    pwm_init(slice_num, &config, false);
 
     /* the piezo is very loud if we set this to period/2 */
     pwm_set_gpio_level(28, 5);
+
+    /* now we can start the first period */
+    pwm_set_enabled(slice_num, true);
 
     while (1)
         for (unsigned period = period_initial; period > period_final; period -= decrement) {
@@ -372,7 +377,7 @@ int main(void) {
     } child_pwm_led, child_uart_rx, child_pwm_chirp, child_button;
 
     child_start(&child_pwm_led.child, pwm_led_task);
-    child_start(&child_pwm_chirp.child, pwm_piezo_morse_task);
+    child_start(&child_pwm_chirp.child, pwm_chirp_task);
     child_start(&child_uart_rx.child, uart_rx_task);
     child_start(&child_button.child, button_task);
 
