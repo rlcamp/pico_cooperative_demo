@@ -221,35 +221,57 @@ static void pwm_piezo_morse_task(void) {
 
 static void pwm_chirp_task(void) {
     /* generate quiet linear-period-modulated chirps from 2818 to 3548 Hz with piezo */
-    gpio_set_function(28, GPIO_FUNC_PWM);
-    const unsigned slice_num = pwm_gpio_to_slice_num(28);
 
-    /* these are all in 12 MHz ticks */
-    const unsigned period_initial = 4258;
-    const unsigned period_final = 3382;
-    const unsigned decrement = 1;
+    /* get another timer, enable interrupt for alarm, but leave it disabled in nvic */
+    const unsigned alarm_num = timer_hardware_alarm_claim_unused(timer_hw, true);
+    hw_set_bits(&timer_hw->inte, 1U << alarm_num);
+    irq_set_enabled(hardware_alarm_get_irq_num(alarm_num), false);
 
-    pwm_clear_irq(slice_num);
+    const unsigned repeat_rate_microseconds = 1000000;
 
-    /* enable interrupt for pwm wrap, but leave it disabled in nvic */
-    pwm_set_irq_enabled(slice_num, true);
-    irq_set_enabled(PWM_DEFAULT_IRQ_NUM(), false);
+    /* first tick will be one interval from now */
+    timer_hw->alarm[alarm_num] = timer_hw->timerawl + repeat_rate_microseconds;
 
-    /* set up the pwm to tick at 12 MHz (assuming sys is 48 MHz) */
-    pwm_config config = pwm_get_default_config();
-    pwm_config_set_clkdiv_int(&config, 4);
-    pwm_config_set_wrap(&config, period_initial - 1);
+    while (1) {
+        /* run other tasks or low power sleep until next alarm interrupt */
+        while (!(timer_hw->intr & (1U << alarm_num)))
+            yield();
 
-    /* need to do this before we can set gpio level */
-    pwm_init(slice_num, &config, false);
+        /* acknowledge and clear the interrupt in both timer and nvic */
+        hw_clear_bits(&timer_hw->intr, 1U << alarm_num);
+        irq_clear(hardware_alarm_get_irq_num(alarm_num));
 
-    /* the piezo is very loud if we set this to period/2 */
-    pwm_set_gpio_level(28, 5);
+        /* increment and rearm the alarm */
+        timer_hw->alarm[alarm_num] += repeat_rate_microseconds;
 
-    /* now we can start the first period */
-    pwm_set_enabled(slice_num, true);
+        gpio_set_function(28, GPIO_FUNC_PWM);
+        const unsigned slice_num = pwm_gpio_to_slice_num(28);
 
-    while (1)
+        /* these are all in 12 MHz ticks */
+        const unsigned period_initial = 4258;
+        const unsigned period_final = 3382;
+        const unsigned decrement = 1;
+
+        pwm_clear_irq(slice_num);
+
+        /* enable interrupt for pwm wrap, but leave it disabled in nvic */
+        pwm_set_irq_enabled(slice_num, true);
+        irq_set_enabled(PWM_DEFAULT_IRQ_NUM(), false);
+
+        /* set up the pwm to tick at 12 MHz (assuming sys is 48 MHz) */
+        pwm_config config = pwm_get_default_config();
+        pwm_config_set_clkdiv_int(&config, 4);
+        pwm_config_set_wrap(&config, period_initial - 1);
+
+        /* need to do this before we can set gpio level */
+        pwm_init(slice_num, &config, false);
+
+        /* warning: the piezo is very loud if we set this to period/2 */
+        pwm_set_gpio_level(28, 15);
+
+        /* now we can start the first period */
+        pwm_set_enabled(slice_num, true);
+
         for (unsigned period = period_initial; period > period_final; period -= decrement) {
             /* change the pwm period for the next cycle on every cycle */
             pwm_hw->slice[slice_num].top = period - decrement - 1;
@@ -262,6 +284,11 @@ static void pwm_chirp_task(void) {
             pwm_clear_irq(slice_num);
             irq_clear(PWM_DEFAULT_IRQ_NUM());
         }
+
+        pwm_set_gpio_level(28, 0);
+
+        pwm_set_enabled(slice_num, false);
+    }
 }
 
 static void uart_rx_task(void) {
