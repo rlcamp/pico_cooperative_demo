@@ -8,6 +8,8 @@
 #include "hardware/uart.h"
 #include "hardware/pwm.h"
 
+#include "pico/bootrom.h"
+
 #include "cortex_m_cooperative_multitasking.h"
 
 #include <stdio.h>
@@ -264,6 +266,10 @@ static void uart_rx_task(void) {
 
         /* if we got a complete line... */
         if (line) {
+            /* if we get "flash" on the uart, reset into bootloader */
+            if (!strcmp(line, "flash"))
+                rom_reset_usb_boot_extra(-1, 0, false);
+
             static char buf[128];
             snprintf(buf, sizeof(buf), "%% %s\r\n", line);
 
