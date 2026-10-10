@@ -80,7 +80,8 @@ static void uart_tx_unlock(void) {
     __sev();
 }
 
-static void pwm_led_task(void) {
+static void pwm_led_task(void * arg) {
+    (void)arg;
     const unsigned period_in_12MHz_ticks = 30000;
 
     gpio_set_function(PICO_DEFAULT_LED_PIN, GPIO_FUNC_PWM);
@@ -168,7 +169,8 @@ static const uint32_t table[] = {
     [':'] = 0b11101110111010101000,
 };
 
-static void pwm_piezo_morse_task(void) {
+static void pwm_piezo_morse_task(void * arg) {
+    (void)arg;
     /* generate morse code */
     gpio_set_function(28, GPIO_FUNC_PWM);
     const unsigned slice_num = pwm_gpio_to_slice_num(28);
@@ -221,7 +223,8 @@ static void pwm_piezo_morse_task(void) {
     }
 }
 
-static void uart_rx_task(void) {
+static void uart_rx_task(void * arg) {
+    (void)arg;
     /* wake up when either fifo reaches 1/8 full, or when fifo is nonempty and a timeout elapses */
     hw_set_bits(&uart_get_hw(uart0)->imsc, 1U << UART_UARTIMSC_RXIM_LSB | 1U << UART_UARTIMSC_RTIM_LSB);
     irq_set_enabled(UART_IRQ_NUM(uart0), false);
@@ -280,7 +283,8 @@ static void uart_rx_task(void) {
     }
 }
 
-static void button_task(void) {
+static void button_task(void * arg) {
+    (void)arg;
     unsigned gpio = 2;
 
     gpio_init(gpio);
@@ -337,10 +341,10 @@ int main(void) {
         struct child_context child;
     } child_pwm_led, child_uart_rx, child_pwm_piezo, child_button;
 
-    child_start(&child_pwm_led.child, pwm_led_task);
-    child_start(&child_pwm_piezo.child, pwm_piezo_morse_task);
-    child_start(&child_uart_rx.child, uart_rx_task);
-    child_start(&child_button.child, button_task);
+    child_start(&child_pwm_led.child, pwm_led_task, NULL);
+    child_start(&child_pwm_piezo.child, pwm_piezo_morse_task, NULL);
+    child_start(&child_uart_rx.child, uart_rx_task, NULL);
+    child_start(&child_button.child, button_task, NULL);
 
     const unsigned alarm_num = timer_hardware_alarm_claim_unused(timer_hw, true);
 

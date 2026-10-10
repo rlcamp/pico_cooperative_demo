@@ -1,4 +1,4 @@
-/* Copyright 2021-2025 Richard Campbell
+/* Copyright 2021-2026 Richard Campbell
 
  Permission to use, copy, modify, and/or distribute this software for any purpose with or
  without fee is hereby granted, provided that the above copyright notice and this
@@ -20,6 +20,7 @@
 register void * _buf asm("r0") = buf; /* ensure the compiler places this where it will be the argument to func */ \
 register void (* _func)(void *) asm("r1") = func; /* ensure the compiler does not place this in a frame pointer register */ \
 asm volatile( \
+".balign 4\n" /* pc-relative adds implicitly round down to 4-byte alignment at runtime */ \
 "add lr, pc, (0f - 1f) | 1\n" /* compute address of end of this block of asm, which will be jumped to when returning to this context */ \
 "1: push {r7, lr}\n" /* save the future pc value as well as possible frame pointer (which is not allowed in the clobber list) */ \
 "str sp, [%0]\n" /* store the current stack pointer in the context buffer */ \
@@ -31,6 +32,7 @@ asm volatile( \
 #define SWAP_CONTEXT(buf) do { \
 register void * _buf asm("r0") = buf; \
 asm volatile( \
+".balign 4\n" \
 "add lr, pc, (0f - 1f) | 1\n" /* compute address of end of this block of asm, which will be jumped to when returning to this context */ \
 "1: push {r7, lr}\n" /* save the future pc value and possible frame pointer */ \
 "ldr r6, [%0]\n" /* load the saved stack pointer from the context buffer */ \
@@ -40,29 +42,26 @@ asm volatile( \
 ".balign 4\n" \
 "0:\n" : "+r"(_buf) : : "r1", "r2", "r3", "r4", "r5", "r6", "r8", "r9", "r10", "r11", "r12", "lr", "q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9", "q10", "q11", "q12", "q13", "q14", "q15", "cc", "memory"); } while(0)
 
-static void * context_of_current_child = NULL;
+static struct child_context * current_child = NULL;
 
 /* a singly-linked list of active child tasks */
 static struct child_context * children_head = NULL;
 
 void yield(void) {
     /* if in a child, yielding back to parent... */
-    if (context_of_current_child) {
-        void * context = context_of_current_child;
-        context_of_current_child = NULL;
-        SWAP_CONTEXT(context);
+    if (current_child) {
+        struct child_context * tmp = current_child;
+        current_child = NULL;
+        SWAP_CONTEXT(tmp->context);
     } else {
         /* when yielding from parent, sleep until the next event (i.e. interrupt) */
         sleep_until_event();
 
-        /* loop over children, yielding to each, and removing any that have finished */
-        for (struct child_context * this = children_head, ** pn = &children_head;
-             this; pn = &this->next, this = this->next) {
-                context_of_current_child = this->context;
-                SWAP_CONTEXT(context_of_current_child);
-
-                if (!this->func) *pn = this->next;
-            }
+        /* loop over singly-linked list of active tasks, yielding to each */
+        for (struct child_context * this = children_head; this; this = this->next) {
+            current_child = this;
+            SWAP_CONTEXT(current_child->context);
+        }
     }
 }
 
@@ -73,13 +72,15 @@ __attribute((weak)) void sleep_until_event(void) {
 
 __attribute((noreturn)) static void springboard(void * argv) {
     struct child_context * child = argv;
-    /* set this so that when either parent or child call the parameter-free yield, it
-     can figure out who is calling it and whether to sleep, context switch, or both */
-    context_of_current_child = child->context;
 
-    child->func();
+    child->func(child->arg);
 
-    /* tell parent not to context switch back to here */
+    /* remove self from singly-linked list of running tasks */
+    struct child_context ** prev_next = &children_head;
+    for (struct child_context * this = children_head; this && this != child; this = this->next)
+        prev_next = &this->next;
+    *prev_next = child->next;
+
     child->func = NULL;
 
     /* make sure other tasks (not just main) get to react to this task ending */
@@ -92,21 +93,20 @@ __attribute((noreturn)) static void springboard(void * argv) {
     __builtin_unreachable();
 }
 
-void child_start(struct child_context * child, void (* func)(void)) {
-    child->func = func;
-    BOOTSTRAP_CONTEXT(child->context, springboard);
+void child_start(struct child_context * child, void (* func)(void *), void * arg) {
+    child->next = children_head;
+    children_head = child;
 
-    if (child->func) {
-        /* if child returned without ever yielding, do not add to list */
-        child->next = children_head;
-        children_head = child;
-    }
+    child->func = func;
+    child->arg = arg;
+    current_child = child;
+    BOOTSTRAP_CONTEXT(child->context, springboard);
 }
 
 int child_is_running(struct child_context * child) {
     return child->func != NULL;
 }
 
-void * current_task(void) {
-    return context_of_current_child;
+const struct child_context * current_task(void) {
+    return current_child;
 }

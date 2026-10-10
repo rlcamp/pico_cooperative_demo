@@ -1,4 +1,4 @@
-/* Copyright 2021-2025 Richard Campbell
+/* Copyright 2021-2026 Richard Campbell
 
  Permission to use, copy, modify, and/or distribute this software for any purpose with or
  without fee is hereby granted, provided that the above copyright notice and this
@@ -17,7 +17,10 @@ struct child_context {
     unsigned char context[4] __attribute((aligned(8)));
 
     /* springboard runs this and then sets it to NULL, which the parent can detect */
-    void (* volatile func)(void);
+    void (* volatile func)(void *);
+
+    /* parent can use this to pass an argument to child */
+    void * arg;
 
     /* so that the parent can loop through these in the parameter-free yield() */
     struct child_context * next;
@@ -33,7 +36,7 @@ struct child_context {
 void yield(void);
 
 /* parent calls this to start a child */
-void child_start(struct child_context * child, void (* func)(void));
+void child_start(struct child_context * child, void (* func)(void *), void * arg);
 
 /* parent can call this to determine whether an already-started child is still running */
 int child_is_running(struct child_context * child);
@@ -42,4 +45,4 @@ int child_is_running(struct child_context * child);
 extern void sleep_until_event(void);
 
 /* returns an opaque identifier which can be used in comparisons */
-void * current_task(void);
+const struct child_context * current_task(void);
